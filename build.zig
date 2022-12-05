@@ -1,5 +1,6 @@
 const std = @import("std");
 
+
 pub fn build(b: *std.build.Builder) void {
     // Standard target options allows the person running `zig build` to choose
     // what target to build for. Here we do not override the defaults, which
@@ -12,7 +13,7 @@ pub fn build(b: *std.build.Builder) void {
     const mode = b.standardReleaseOptions();
 
     const exe = b.addExecutable("brightness-zig", "src/main.zig");
-    exe.addPackage(.{ .name = "clap", .path = "lib/clap/clap.zig" });
+    exe.addPackagePath("clap", "lib/zig-clap/clap.zig");
     exe.setTarget(target);
     exe.setBuildMode(mode);
     exe.install();
