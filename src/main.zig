@@ -1,21 +1,68 @@
 const std = @import("std");
 const clap = @import("clap");
 
+
 const debug = std.debug;
 const io = std.io;
+
+const exec = std.ChildProcess.exec;
 
 var gpa = std.heap.GeneralPurposeAllocator(.{}){};
 const allocator = gpa.allocator();
 
+fn parseU16(buf: []const u8) !u16 { return try std.fmt.parseUnsigned(u16, buf, 10); }
 
-const appName = "brightness";
+
+const appName = "brightnessctl";
 const stateDir = "/var/lib";
 
-const CmdParams = struct {
+const BrightnessInfo = struct {
+    class: [] const u8,
+    device: [] const u8,
+    curVal: u16,
+    maxVal: u16,
+};
+const Cmd = struct {
     class: ?[] const u8,
     device: ?[] const u8,
+    fn getBrightnessInfo(self: *const Cmd) !BrightnessInfo {
+        var cmdLine = std.ArrayList([]const u8).init(allocator);
+        defer cmdLine.deinit();
+        try cmdLine.appendSlice(&[_][] const u8 {
+            appName,
+            "--machine-readable",
+            "info",
+        });
+        if (self.class) |class| {
+            try cmdLine.appendSlice(&[_][] const u8 { " --class ", class });
+        }
+        if (self.device) |device| {
+            try cmdLine.appendSlice(&[_][] const u8 { " --device ", device });
+        }
+        debug.print("command line: {s}\n", .{cmdLine.items});
+        const cmdResult = try exec(.{
+            .allocator = allocator,
+            .argv = cmdLine.items,
+        });
+
+        var tokens: [5][]const u8 = undefined;
+        var iter = std.mem.tokenize(u8, cmdResult.stdout, ",");
+        var ind: u8 = 0;
+        while (ind < tokens.len) : (ind += 1) {
+            tokens[ind] = iter.next().?;
+        }
+        tokens[tokens.len - 1] = std.mem.trimRight(u8, tokens[tokens.len - 1], "\n");
+
+        return .{
+            .class = tokens[0],
+            .device = tokens[1],
+            .curVal = try parseU16(tokens[2]),
+            .maxVal = try parseU16(tokens[4]),
+        };
+
+    }
 };
-const BarParams = struct {
+const Bar = struct {
     name: [] const u8,
     signalNum: u8,
 };
@@ -23,18 +70,14 @@ const Params = struct {
     change: i8,
     exponent: f64,
     minValue: u16,
-    cmdParams: CmdParams,
-    barParams: ?BarParams,
+    cmdParams: Cmd,
+    barParams: ?Bar,
 };
 
 
 
 
 
-fn getBrightnessInfo(p: CmdParams) !void {
-    _ = p;
-
-}
 
 
 
@@ -91,7 +134,7 @@ pub fn main() !void {
                 ++ "`--bar-process-name` and `--signal-num` must be both present or absent",
                 );
     }
-    const p = Params{
+    const p: Params = .{
         .change = change,
         .exponent = exponent,
         .minValue = res.args.@"min-value" orelse 1,
@@ -104,7 +147,8 @@ pub fn main() !void {
             .signalNum = res.args.@"signal-num".?,
         },
     };
-    debug.print("{}\n", .{p});
+
+    debug.print("{any}\n", .{p.cmdParams.getBrightnessInfo()});
 
 
 
