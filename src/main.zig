@@ -1,19 +1,36 @@
 const std = @import("std");
+const clap = @import("clap");
+
+var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+const allocator = gpa.allocator();
+
+const appName = "brightness";
+const stateDir = "/var/lib";
+
+
+
+
 
 pub fn main() !void {
-    // Prints to stderr (it's a shortcut based on `std.io.getStdErr()`)
-    std.debug.print("All your {s} are belong to us.\n", .{"codebase"});
+    const params = comptime clap.parseParamsComptime(
+        \\-h, --help | Display this help and exit.
+        \\-e, --exponent | exponent to use in gamma adjust
+        \\-n, --min-value | minimum integer brightness
+        \\-c, --class | class name
+        \\-d, --device | device name
+        \\-b, --bar-process-name | name of the bar this program should signal upon changing brightness
+        \\-s, --signal-num | sends signal of SIGRTMIN+{signalNum} to the bar process
+    );
 
-    // stdout is for the actual output of your application, for example if you
-    // are implementing gzip, then only the compressed bytes should be sent to
-    // stdout, not any debugging messages.
-    const stdout_file = std.io.getStdOut().writer();
-    var bw = std.io.bufferedWriter(stdout_file);
-    const stdout = bw.writer();
+    var diag = clap.Diagnostic{};
+    var res = clap.parse(clap.Help, &params, clap.parsers.default, .{.diagnostic = &diag})
+            catch |err| {
+                diag.report(io.getStdErr().writer(), err) catch {};
+                return err;
+            };
+    defer res.deinit();
 
-    try stdout.print("Run `zig build test` to run the tests.\n", .{});
 
-    try bw.flush(); // don't forget to flush!
 }
 
 test "simple test" {
