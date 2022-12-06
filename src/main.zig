@@ -1,7 +1,8 @@
 const std = @import("std");
 const clap = @import("clap");
-const mpd = @cImport(@cInclude("mpdecimal.h"));
-
+const c = @cImport({
+    @cInclude("mpdecimal.h");
+});
 
 const debug = std.debug;
 const io = std.io;
@@ -11,48 +12,81 @@ const exec = std.ChildProcess.exec;
 var gpa = std.heap.GeneralPurposeAllocator(.{}){};
 const allocator = gpa.allocator();
 
-
-
 const appName = "brightnessctl";
 const stateDir = "/var/lib";
 
+var status: u32 = undefined;
+fn mpdError() bool {
+    return status & c.MPD_Errors != 0;
+}
+fn mpdAssert() !void {
+    if (status) {
+        return error.MPDecError;
+    }
+}
 
-
-
-
-fn parseU16(buf: []const u8) !u16 { return try std.fmt.parseUnsigned(u16, buf, 10); }
-
+fn parseU16(buf: []const u8) !u16 {
+    return try std.fmt.parseUnsigned(u16, buf, 10);
+}
 
 const BrightnessInfo = struct {
-    class: [] const u8,
-    device: [] const u8,
+    class: []const u8,
+    device: []const u8,
     curVal: u16,
     maxVal: u16,
 
-    fn getPercent(self: *const Cmd, exponent: f64) !f64 {
-        _ = exponent;
-        return self.curVal / self.maxVal;
+    fn getPercent(
+        self: *const Cmd,
+        exponent: *const c.mpd_t,
+        context: *const c.mpd_context_t,
+    ) !*c.mpd_t {
+        const output = c.mpd_new(context);
+        errdefer c.mpd_del(output);
+
+        {
+            const simplePercent = c.mpd_new(context);
+            const inverse = c.mpd_new(context);
+            defer c.mpd_del(simplePercent);
+            defer c.mpd_del(inverse);
+            {
+                const curVal = c.mpd_new(context);
+                defer c.mpd_del(curVal);
+                c.mpd_set_u32(curVal, self.curVal, context);
+                c.mpd_qdiv_u32(simplePercent, curVal, self.maxVal, context, &status);
+                try mpdAssert();
+            }
+            {
+                const one = c.mpd_new(context);
+                defer c.mpd_del(one);
+                c.mpd_set_u32(one, 1, context);
+                c.mpd_qdiv(inverse, one, exponent, context, &status);
+                try mpdAssert();
+            }
+            c.mpd_qexp(output, simplePercent, inverse, context, &status);
+            try mpdAssert();
+        }
+
+        return output;
     }
 };
 
 const Cmd = struct {
-    class: ?[] const u8,
-    device: ?[] const u8,
-
+    class: ?[]const u8,
+    device: ?[]const u8,
 
     fn getBrightnessInfo(self: *const Cmd) !BrightnessInfo {
         var cmdLine = std.ArrayList([]const u8).init(allocator);
         defer cmdLine.deinit();
-        try cmdLine.appendSlice(&[_][] const u8 {
+        try cmdLine.appendSlice(&[_][]const u8{
             appName,
             "--machine-readable",
             "info",
         });
         if (self.class) |class| {
-            try cmdLine.appendSlice(&[_][] const u8 { " --class ", class });
+            try cmdLine.appendSlice(&[_][]const u8{ " --class ", class });
         }
         if (self.device) |device| {
-            try cmdLine.appendSlice(&[_][] const u8 { " --device ", device });
+            try cmdLine.appendSlice(&[_][]const u8{ " --device ", device });
         }
         debug.print("command line: {s}\n", .{cmdLine.items});
         const cmdResult = try exec(.{
@@ -88,28 +122,18 @@ const Bar = struct {
 
 const Params = struct {
     change: i8,
-    exponent: *mpd.mpd_t,
+    exponent: *c.mpd_t,
     minValue: u16,
     cmdParams: Cmd,
     barParams: ?Bar,
 };
-
-
-
-
-
-
-
-
 
 fn parserError(comptime msg: []const u8) error{InvalidParameter}!void {
     debug.print(msg ++ "\n", .{});
     return error.InvalidParameter;
 }
 
-
 pub fn main() !void {
-
     const params = comptime clap.parseParamsComptime(
         \\-h, --help                    Display this help and exit.
         \\-e, --exponent <str>          exponent to use in gamma adjust
@@ -121,46 +145,57 @@ pub fn main() !void {
         \\<i8>                          percent value to change brightness
     );
 
-
     var diag = clap.Diagnostic{};
-    var res = clap.parse(clap.Help, &params, clap.parsers.default, .{.diagnostic = &diag})
-            catch |err| {
-                diag.report(io.getStdErr().writer(), err) catch {};
-                return err;
-            };
+    var res = clap.parse(
+        clap.Help,
+        &params,
+        clap.parsers.default,
+        .{ .diagnostic = &diag },
+    ) catch |err| {
+        diag.report(io.getStdErr().writer(), err) catch {};
+        return err;
+    };
     defer res.deinit();
 
     if (res.args.help) {
         return clap.help(std.io.getStdErr().writer(), clap.Help, &params, .{});
     }
     if (res.positionals.len != 1) {
-        return parserError("Error while parsing arguments: "
-                ++ "Must have exactly one positional argument for brightness change value"
-                );
+        return parserError(
+            "Error while parsing arguments: " ++
+                "Must have exactly one positional argument for brightness change value",
+        );
     }
 
     const change: i8 = res.positionals[0];
 
-    var context: mpd.mpd_context_t = undefined;
-    mpd.mpd_defaultcontext(&context);
+    var context: c.mpd_context_t = undefined;
+    c.mpd_defaultcontext(&context);
 
-    const exponent = mpd.mpd_new(&context);
-    defer mpd.mpd_del(exponent);
-    mpd.mpd_set_string(exponent, @ptrCast([*c]const u8, res.args.exponent orelse "1"), &context);
-    if (mpd.mpd_getstatus(&context) & mpd.MPD_Invalid_operation != 0
-            or !(mpd.mpd_ispositive(exponent) == 1 and mpd.mpd_isfinite(exponent) == 1)) {
-        return parserError("Error while parsing arguments: `--exponent` must be a positive number");
+    const exponent = c.mpd_new(&context);
+    defer c.mpd_del(exponent);
+    c.mpd_qset_string(
+        exponent,
+        @ptrCast([*c]const u8, res.args.exponent orelse "1"),
+        &context,
+        &status,
+    );
+    if (mpdError() or !(c.mpd_ispositive(exponent) == 1 and c.mpd_isfinite(exponent) == 1)) {
+        return parserError(
+            "Error while parsing arguments: `--exponent` must be a positive number",
+        );
     }
 
     if (try std.math.absInt(change) > 100) {
-        return parserError("Error while parsing arguments: "
-                ++ "brightness change value cannot be over 100%",
-                );
+        return parserError(
+            "Error while parsing arguments: " ++ "brightness change value cannot be over 100%",
+        );
     }
     if ((res.args.@"bar-process-name" == null) != (res.args.@"signal-num" == null)) {
-        return parserError("Error while parsing arguments: "
-                ++ "`--bar-process-name` and `--signal-num` must be both present or absent",
-                );
+        return parserError(
+            "Error while parsing arguments: " ++
+                "`--bar-process-name` and `--signal-num` must be both present or absent",
+        );
     }
     const p: Params = .{
         .change = change,
@@ -177,13 +212,10 @@ pub fn main() !void {
     };
 
     const b = try p.cmdParams.getBrightnessInfo();
-    debug.print("class: {s} ({d}), device: {s} ({d})\n", .{b.class, b.class.len, b.device, b.device.len});
-
-
-
-
-
-
+    debug.print(
+        "class: {s} ({d}), device: {s} ({d})\n",
+        .{ b.class, b.class.len, b.device, b.device.len },
+    );
 }
 
 test "simple test" {
