@@ -1,5 +1,6 @@
 const std = @import("std");
 const clap = @import("clap");
+const mpd = @cImport(@cInclude("mpdecimal.h"));
 
 
 const debug = std.debug;
@@ -10,21 +11,35 @@ const exec = std.ChildProcess.exec;
 var gpa = std.heap.GeneralPurposeAllocator(.{}){};
 const allocator = gpa.allocator();
 
-fn parseU16(buf: []const u8) !u16 { return try std.fmt.parseUnsigned(u16, buf, 10); }
 
 
 const appName = "brightnessctl";
 const stateDir = "/var/lib";
+
+
+
+
+
+fn parseU16(buf: []const u8) !u16 { return try std.fmt.parseUnsigned(u16, buf, 10); }
+
 
 const BrightnessInfo = struct {
     class: [] const u8,
     device: [] const u8,
     curVal: u16,
     maxVal: u16,
+
+    fn getPercent(self: *const Cmd, exponent: f64) !f64 {
+        _ = exponent;
+        return self.curVal / self.maxVal;
+    }
 };
+
 const Cmd = struct {
     class: ?[] const u8,
     device: ?[] const u8,
+
+
     fn getBrightnessInfo(self: *const Cmd) !BrightnessInfo {
         var cmdLine = std.ArrayList([]const u8).init(allocator);
         defer cmdLine.deinit();
@@ -49,7 +64,11 @@ const Cmd = struct {
         var iter = std.mem.tokenize(u8, cmdResult.stdout, ",");
         var ind: u8 = 0;
         while (ind < tokens.len) : (ind += 1) {
-            tokens[ind] = iter.next().?;
+            if (iter.next()) |token| {
+                tokens[ind] = token;
+            } else {
+                return error.TokenError;
+            }
         }
         tokens[tokens.len - 1] = std.mem.trimRight(u8, tokens[tokens.len - 1], "\n");
 
@@ -59,20 +78,22 @@ const Cmd = struct {
             .curVal = try parseU16(tokens[2]),
             .maxVal = try parseU16(tokens[4]),
         };
-
     }
 };
+
 const Bar = struct {
-    name: [] const u8,
+    name: []const u8,
     signalNum: u8,
 };
+
 const Params = struct {
     change: i8,
-    exponent: f64,
+    exponent: *mpd.mpd_t,
     minValue: u16,
     cmdParams: Cmd,
     barParams: ?Bar,
 };
+
 
 
 
@@ -88,9 +109,10 @@ fn parserError(comptime msg: []const u8) error{InvalidParameter}!void {
 
 
 pub fn main() !void {
+
     const params = comptime clap.parseParamsComptime(
         \\-h, --help                    Display this help and exit.
-        \\-e, --exponent <f64>          exponent to use in gamma adjust
+        \\-e, --exponent <str>          exponent to use in gamma adjust
         \\-n, --min-value <u16>         minimum integer brightness
         \\-c, --class <str>             class name
         \\-d, --device <str>            device name
@@ -117,13 +139,19 @@ pub fn main() !void {
                 );
     }
 
+    const change: i8 = res.positionals[0];
 
-    const exponent: f64 = res.args.exponent orelse 1.0;
-    const change: i8  = res.positionals[0];
+    var context: mpd.mpd_context_t = undefined;
+    mpd.mpd_defaultcontext(&context);
 
-    if (exponent <= 0.0) {
-        return parserError("Error while parsing arguments: `--exponent` must be positive");
+    const exponent = mpd.mpd_new(&context);
+    defer mpd.mpd_del(exponent);
+    mpd.mpd_set_string(exponent, @ptrCast([*c]const u8, res.args.exponent orelse "1"), &context);
+    if (mpd.mpd_getstatus(&context) & mpd.MPD_Invalid_operation != 0
+            or !(mpd.mpd_ispositive(exponent) == 1 and mpd.mpd_isfinite(exponent) == 1)) {
+        return parserError("Error while parsing arguments: `--exponent` must be a positive number");
     }
+
     if (try std.math.absInt(change) > 100) {
         return parserError("Error while parsing arguments: "
                 ++ "brightness change value cannot be over 100%",
@@ -148,7 +176,10 @@ pub fn main() !void {
         },
     };
 
-    debug.print("{any}\n", .{p.cmdParams.getBrightnessInfo()});
+    const b = try p.cmdParams.getBrightnessInfo();
+    debug.print("class: {s} ({d}), device: {s} ({d})\n", .{b.class, b.class.len, b.device, b.device.len});
+
+
 
 
 

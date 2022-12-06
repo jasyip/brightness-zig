@@ -14,6 +14,10 @@ pub fn build(b: *std.build.Builder) void {
 
     const exe = b.addExecutable("brightness-zig", "src/main.zig");
     exe.addPackagePath("clap", "lib/zig-clap/clap.zig");
+
+    exe.linkLibC();
+    exe.linkSystemLibrary("mpdec");
+
     exe.setTarget(target);
     exe.setBuildMode(mode);
     exe.install();
