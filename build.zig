@@ -12,11 +12,12 @@ pub fn build(b: *std.build.Builder) void {
     // between Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall.
     const mode = b.standardReleaseOptions();
 
-    const exe = b.addExecutable("brightness-zig", "src/main.zig");
+    const exe = b.addExecutable("brightnessctl-wrap", "src/brightnessctl-wrapper.zig");
     exe.addPackagePath("clap", "lib/zig-clap/clap.zig");
 
     exe.linkLibC();
     exe.linkSystemLibrary("mpdec");
+
 
     exe.setTarget(target);
     exe.setBuildMode(mode);

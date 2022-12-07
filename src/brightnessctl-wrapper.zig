@@ -1,80 +1,32 @@
 const std = @import("std");
 const clap = @import("clap");
-const c = @cImport({
-    @cInclude("mpdecimal.h");
-});
+
+const b = @import("brightness/brightness.zig");
+const c = b.c;
+usingnamespace b;
+
 
 const debug = std.debug;
-const io = std.io;
 
 const exec = std.ChildProcess.exec;
 
 var gpa = std.heap.GeneralPurposeAllocator(.{}){};
 const allocator = gpa.allocator();
 
-const app_name = "brightnessctl";
-const state_dir = "/var/lib/brightness";
 
-var status: u32 = undefined;
-fn mpdError() bool {
-    return status & c.MPD_Errors != 0;
-}
-fn mpdAssert() !void {
-    if (status) {
-        return error.MPDecError;
-    }
-}
+const app_name = "brightnessctl";
+
 
 fn parseU16(buf: []const u8) !u16 {
     return try std.fmt.parseUnsigned(u16, buf, 10);
 }
 
-const BrightnessInfo = struct {
-    class: []const u8,
-    device: []const u8,
-    cur_val: u16,
-    max_val: u16,
-
-    fn getPercent(
-        self: *const BrightnessInfo,
-        exponent: *const c.mpd_t,
-        context: *const c.mpd_context_t,
-    ) !*c.mpd_t {
-        const output = c.mpd_new(context);
-        errdefer c.mpd_del(output);
-
-        {
-            const simple_percent = c.mpd_new(context);
-            const inverse = c.mpd_new(context);
-            defer c.mpd_del(simple_percent);
-            defer c.mpd_del(inverse);
-            {
-                const cur_val = c.mpd_new(context);
-                defer c.mpd_del(cur_val);
-                c.mpd_set_u32(cur_val, self.cur_val, context);
-                c.mpd_qdiv_u32(simple_percent, cur_val, self.max_val, context, &status);
-                try mpdAssert();
-            }
-            {
-                const one = c.mpd_new(context);
-                defer c.mpd_del(one);
-                c.mpd_set_u32(one, 1, context);
-                c.mpd_qdiv(inverse, one, exponent, context, &status);
-                try mpdAssert();
-            }
-            c.mpd_qexp(output, simple_percent, inverse, context, &status);
-            try mpdAssert();
-        }
-
-        return output;
-    }
-};
 
 const Cmd = struct {
     class: ?[]const u8,
     device: ?[]const u8,
 
-    fn getBrightnessInfo(self: *const Cmd) !*const BrightnessInfo {
+    fn getBrightnessInfo(self: *const @This()) !*const b.BrightnessInfo {
         var cmd_line = std.ArrayList([]const u8).init(allocator);
         defer cmd_line.deinit();
         try cmd_line.appendSlice(&[_][]const u8{
@@ -106,7 +58,7 @@ const Cmd = struct {
         }
         tokens[tokens.len - 1] = std.mem.trimRight(u8, tokens[tokens.len - 1], "\n");
 
-        const output = try allocator.create(BrightnessInfo);
+        const output = try allocator.create(b.BrightnessInfo);
         errdefer allocator.destroy(output);
         output.class = tokens[0];
         output.device = tokens[1];
@@ -118,7 +70,7 @@ const Cmd = struct {
 
 const Bar = struct {
     name: []const u8,
-    signalNum: u8,
+    signal_num: u8,
 };
 
 const Params = struct {
@@ -128,7 +80,7 @@ const Params = struct {
     cmd_params: Cmd,
     bar_params: ?Bar,
 
-    fn newPercent(brightness_info: *const BrightnessInfo) !*c.mpd_t {
+    fn newPercent(brightness_info: *const b.BrightnessInfo) !*c.mpd_t {
         const cur_percent = brightness_info.getPercent();
         defer allocator.destroy(cur_percent);
     }
@@ -158,7 +110,7 @@ pub fn main() !void {
         clap.parsers.default,
         .{ .diagnostic = &diag },
     ) catch |err| {
-        diag.report(io.getStdErr().writer(), err) catch {};
+        diag.report(std.io.getStdErr().writer(), err) catch {};
         return err;
     };
     defer res.deinit();
@@ -168,8 +120,7 @@ pub fn main() !void {
     }
     if (res.positionals.len != 1) {
         return parserError(
-            "Error while parsing arguments: " ++
-                "Must have exactly one positional argument for brightness change value",
+            "Must have exactly one positional argument for brightness change value",
         );
     }
 
@@ -181,6 +132,7 @@ pub fn main() !void {
     const exponent = c.mpd_new(&context);
     defer c.mpd_del(change);
     defer c.mpd_del(exponent);
+    var status: u32 = undefined;
 
     c.mpd_qset_string(
         exponent,
@@ -188,7 +140,7 @@ pub fn main() !void {
         &context,
         &status,
     );
-    if (mpdError() or !(c.mpd_ispositive(exponent) == 1 and c.mpd_isfinite(exponent) == 1)) {
+    if (b.mpdError(status) or !(c.mpd_ispositive(exponent) == 1 and c.mpd_isfinite(exponent) == 1)) {
         return parserError(
             "`--exponent` must be a positive number",
         );
@@ -200,7 +152,7 @@ pub fn main() !void {
         &context,
         &status,
     );
-    if (mpdError() or c.mpd_isfinite(change) == 0) return parserError(
+    if (b.mpdError(status) or c.mpd_isfinite(change) == 0) return parserError(
         "brightness change value must be a valid number"
     );
     {
@@ -227,44 +179,18 @@ pub fn main() !void {
         },
         .bar_params = if (res.args.@"bar-process-name" == null) null else .{
             .name = res.args.@"bar-process-name".?,
-            .signalNum = res.args.@"signal-num".?,
+            .signal_num = res.args.@"signal-num".?,
         },
     };
 
-    const b = try p.cmd_params.getBrightnessInfo();
-    defer allocator.destroy(b);
+    const brightness_info = try p.cmd_params.getBrightnessInfo();
+    defer allocator.destroy(brightness_info);
     debug.print(
         "class: {s} ({d}), device: {s} ({d})\n",
-        .{ b.class, b.class.len, b.device, b.device.len },
+        .{ brightness_info.class, brightness_info.class.len, brightness_info.device, brightness_info.device.len },
     );
+    try b.ensureDeviceDir(brightness_info.class, brightness_info.device);
 
-    const device_dir = try std.fs.path.join(allocator, &[_][]const u8{
-        state_dir,
-        b.device,
-    });
-    defer allocator.free(device_dir);
-
-    var ind: usize = std.fs.path.sep_str.len;
-    while (ind < device_dir.len) {
-        const upper_ind = std.mem.indexOfPosLinear(u8, device_dir, ind, std.fs.path.sep_str) orelse
-            device_dir.len;
-        const path = device_dir[0..upper_ind];
-        debug.print("Path: {s}\n", .{path});
-        std.fs.makeDirAbsolute(path) catch |err| {
-            if (err != std.os.MakeDirError.PathAlreadyExists) return err;
-        };
-        {
-            var path_dir = try std.fs.openDirAbsolute(path, .{});
-            defer path_dir.close();
-            const permissions = (try path_dir.metadata()).permissions();
-            var permissions_inner = permissions.inner;
-            permissions_inner.unixSet(std.fs.File.PermissionsUnix.Class.user, .{.execute = true});
-            permissions_inner.unixSet(std.fs.File.PermissionsUnix.Class.group, .{.execute = true});
-            permissions_inner.unixSet(std.fs.File.PermissionsUnix.Class.other, .{.execute = true});
-            try path_dir.setPermissions(@as(std.fs.File.Permissions, permissions));
-        }
-        ind = upper_ind + std.fs.path.sep_str.len;
-    }
 }
 
 test "simple test" {
