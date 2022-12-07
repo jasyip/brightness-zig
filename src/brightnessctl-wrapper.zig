@@ -140,7 +140,7 @@ pub fn main() !void {
         &context,
         &status,
     );
-    if (b.mpdError(status) or !(c.mpd_ispositive(exponent) == 1 and c.mpd_isfinite(exponent) == 1)) {
+    if (b.mpdError(&status) or !(c.mpd_ispositive(exponent) == 1 and c.mpd_isfinite(exponent) == 1)) {
         return parserError(
             "`--exponent` must be a positive number",
         );
@@ -152,7 +152,7 @@ pub fn main() !void {
         &context,
         &status,
     );
-    if (b.mpdError(status) or c.mpd_isfinite(change) == 0) return parserError(
+    if (b.mpdError(&status) or c.mpd_isfinite(change) == 0) return parserError(
         "brightness change value must be a valid number"
     );
     {

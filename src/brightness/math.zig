@@ -3,10 +3,12 @@ const c = @import("c.zig");
 
 
 
-pub fn mpdError(status: u32) bool {
-    return status & c.MPD_Errors != 0;
+pub fn mpdError(status: *u32) bool {
+    const output: bool = status.* & c.MPD_Errors != 0;
+    status.* = 0;
+    return output;
 }
-pub fn mpdAssert(status: u32) !void {
+pub fn mpdAssert(status: *u32) !void {
     if (mpdError(status)) {
         return error.MPDecError;
     }
@@ -41,17 +43,17 @@ pub const BrightnessInfo = struct {
                 defer c.mpd_del(cur_val);
                 c.mpd_set_u32(cur_val, self.cur_val, context);
                 c.mpd_qdiv_u32(simple_percent, cur_val, self.max_val, context, &status);
-                try mpdAssert();
+                try mpdAssert(&status);
             }
             {
                 const one = c.mpd_new(context);
                 defer c.mpd_del(one);
                 c.mpd_set_u32(one, 1, context);
                 c.mpd_qdiv(inverse, one, exponent, context, &status);
-                try mpdAssert();
+                try mpdAssert(&status);
             }
             c.mpd_qexp(output, simple_percent, inverse, context, &status);
-            try mpdAssert();
+            try mpdAssert(&status);
         }
 
         return output;
