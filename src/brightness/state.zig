@@ -23,7 +23,6 @@ pub fn ensureDeviceDir(class: []const u8, device: []const u8) !void {
         const upper_ind = std.mem.indexOfPosLinear(u8, device_dir, ind, std.fs.path.sep_str) orelse
             device_dir.len;
         const path = device_dir[0..upper_ind];
-        std.debug.print("Path: {s}\n", .{path});
         std.fs.makeDirAbsolute(path) catch |err| {
             if (err != std.os.MakeDirError.PathAlreadyExists) return err;
         };

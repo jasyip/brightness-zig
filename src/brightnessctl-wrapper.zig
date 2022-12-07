@@ -132,7 +132,7 @@ pub fn main() !void {
     const exponent = c.mpd_new(&context);
     defer c.mpd_del(change);
     defer c.mpd_del(exponent);
-    var status: u32 = undefined;
+    var status: u32 = 0;
 
     c.mpd_qset_string(
         exponent,

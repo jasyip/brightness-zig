@@ -31,7 +31,7 @@ pub const BrightnessInfo = struct {
         errdefer c.mpd_del(output);
 
         {
-            var status: u32 = undefined;
+            var status: u32 = 0;
             const simple_percent = c.mpd_new(context);
             const inverse = c.mpd_new(context);
             defer c.mpd_del(simple_percent);
