@@ -1,8 +1,6 @@
 const std = @import("std");
 
-
-var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-const allocator = gpa.allocator();
+const Allocator = std.mem.Allocator;
 
 
 
@@ -11,7 +9,7 @@ const state_dir = "/var/lib/brightness";
 
 
 
-pub fn ensureDeviceDir(class: []const u8, device: []const u8) !void {
+pub fn ensureDeviceDir(allocator: Allocator, device: []const u8, class: []const u8) !void {
 
     const device_dir = try std.fs.path.join(allocator, &[_][]const u8{
         state_dir, class, device,

@@ -9,9 +9,8 @@ usingnamespace b;
 const debug = std.debug;
 
 const exec = std.ChildProcess.exec;
+const Allocator = std.mem.Allocator;
 
-var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-const allocator = gpa.allocator();
 
 
 const app_name = "brightnessctl";
@@ -23,10 +22,10 @@ fn parseU16(buf: []const u8) !u16 {
 
 
 const Cmd = struct {
-    class: ?[]const u8,
     device: ?[]const u8,
+    class: ?[]const u8,
 
-    fn getBrightnessInfo(self: *const @This()) !*const b.BrightnessInfo {
+    fn getBrightnessInfo(self: *const @This(), allocator: Allocator) !*const b.BrightnessInfo {
         var cmd_line = std.ArrayList([]const u8).init(allocator);
         defer cmd_line.deinit();
         try cmd_line.appendSlice(&[_][]const u8{
@@ -34,36 +33,47 @@ const Cmd = struct {
             "--machine-readable",
             "info",
         });
-        if (self.class) |class| {
-            try cmd_line.appendSlice(&[_][]const u8{ " --class ", class });
-        }
         if (self.device) |device| {
             try cmd_line.appendSlice(&[_][]const u8{ " --device ", device });
         }
-        debug.print("command line: {s}\n", .{cmd_line.items});
+        if (self.class) |class| {
+            try cmd_line.appendSlice(&[_][]const u8{ " --class ", class });
+        }
         const cmd_result = try exec(.{
             .allocator = allocator,
             .argv = cmd_line.items,
         });
-
-        var tokens: [5][]const u8 = undefined;
-        var iter = std.mem.tokenize(u8, cmd_result.stdout, ",");
-        var ind: u8 = 0;
-        while (ind < tokens.len) : (ind += 1) {
-            if (iter.next()) |token| {
-                tokens[ind] = token;
-            } else {
-                return error.TokenError;
-            }
+        defer {
+            allocator.free(cmd_result.stdout);
+            allocator.free(cmd_result.stderr);
         }
-        tokens[tokens.len - 1] = std.mem.trimRight(u8, tokens[tokens.len - 1], "\n");
 
         const output = try allocator.create(b.BrightnessInfo);
         errdefer allocator.destroy(output);
-        output.class = tokens[0];
-        output.device = tokens[1];
-        output.cur_val = try parseU16(tokens[2]);
-        output.max_val = try parseU16(tokens[4]);
+        output.allocator = allocator;
+
+        var iter = std.mem.tokenize(u8, cmd_result.stdout, ",");
+
+        if (iter.next()) |token| {
+            output.device = try allocator.dupe(u8, token);
+        } else return error.TokenError;
+        errdefer allocator.free(output.device);
+
+        if (iter.next()) |token| {
+            output.class = try allocator.dupe(u8, token);
+        } else return error.TokenError;
+        errdefer allocator.free(output.class);
+
+        if (iter.next()) |token| {
+            output.cur_val = try parseU16(token);
+        } else return error.TokenError;
+
+        if (iter.next() == null) return error.TokenError;
+
+        if (iter.next()) |token| {
+            output.max_val = try parseU16(std.mem.trimRight(u8, token, "\n"));
+        } else return error.TokenError;
+
         return output;
     }
 };
@@ -80,8 +90,9 @@ const Params = struct {
     cmd_params: Cmd,
     bar_params: ?Bar,
 
-    fn newPercent(brightness_info: *const b.BrightnessInfo) !*c.mpd_t {
-        const cur_percent = brightness_info.getPercent();
+    fn newPercent(self: *const @This(), allocator: Allocator, brightness_info: *const b.BrightnessInfo) !*c.mpd_t {
+        _ = self;
+        const cur_percent = brightness_info.getPercent(allocator);
         defer allocator.destroy(cur_percent);
     }
 };
@@ -92,12 +103,16 @@ fn parserError(comptime msg: []const u8) error{InvalidParameter}!void {
 }
 
 pub fn main() !void {
+
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    const allocator = gpa.allocator();
+
     const params = comptime clap.parseParamsComptime(
         \\-h, --help                    Display this help and exit.
         \\-e, --exponent <str>          exponent to use in gamma adjust
         \\-n, --min-value <u16>         minimum integer brightness
-        \\-c, --class <str>             class name
         \\-d, --device <str>            device name
+        \\-c, --class <str>             device class name
         \\-b, --bar-process-name <str>  name of the bar this program should signal upon changing brightness
         \\-s, --signal-num <u8>         sends signal of SIGRTMIN+{signalNum} to the bar process
         \\<str>                         percent value to change brightness
@@ -130,8 +145,10 @@ pub fn main() !void {
 
     const change = c.mpd_new(&context);
     const exponent = c.mpd_new(&context);
-    defer c.mpd_del(change);
-    defer c.mpd_del(exponent);
+    defer {
+        c.mpd_del(change);
+        c.mpd_del(exponent);
+    }
     var status: u32 = 0;
 
     c.mpd_qset_string(
@@ -169,13 +186,13 @@ pub fn main() !void {
                 "`--bar-process-name` and `--signal-num` must be" ++ "both present or absent"
         );
     }
-    const p: Params = .{
+    const p = Params{
         .change = change,
         .exponent = exponent,
         .min_value = res.args.@"min-value" orelse 1,
         .cmd_params = .{
-            .class = res.args.class,
             .device = res.args.device,
+            .class = res.args.class,
         },
         .bar_params = if (res.args.@"bar-process-name" == null) null else .{
             .name = res.args.@"bar-process-name".?,
@@ -183,19 +200,61 @@ pub fn main() !void {
         },
     };
 
-    const brightness_info = try p.cmd_params.getBrightnessInfo();
-    defer allocator.destroy(brightness_info);
-    debug.print(
-        "class: {s} ({d}), device: {s} ({d})\n",
-        .{ brightness_info.class, brightness_info.class.len, brightness_info.device, brightness_info.device.len },
-    );
-    try b.ensureDeviceDir(brightness_info.class, brightness_info.device);
+    const brightness_info = try p.cmd_params.getBrightnessInfo(allocator);
+    defer {
+        brightness_info.deinit();
+        allocator.destroy(brightness_info);
+    }
+    try b.ensureDeviceDir(allocator, brightness_info.device, brightness_info.class);
 
 }
 
 test "simple test" {
-    var list = std.ArrayList(i32).init(std.testing.allocator);
-    defer list.deinit(); // try commenting this out and see if zig detects the memory leak!
-    try list.append(42);
-    try std.testing.expectEqual(@as(i32, 42), list.pop());
+    const allocator = std.testing.allocator;
+    const expectEqualStrings = std.testing.expectEqualStrings;
+
+    var context: c.mpd_context_t = undefined;
+    c.mpd_defaultcontext(&context);
+
+    const change = c.mpd_new(&context);
+    const exponent = c.mpd_new(&context);
+    defer {
+        c.mpd_del(change);
+        c.mpd_del(exponent);
+    }
+    var status: u32 = 0;
+
+    c.mpd_qset_string(
+        exponent,
+        "3",
+        &context,
+        &status,
+    );
+
+    c.mpd_qset_string(
+        change,
+        "12",
+        &context,
+        &status,
+    );
+
+    const p = Params{
+        .change = change,
+        .exponent = exponent,
+        .min_value = 1,
+        .cmd_params = .{
+            .class = null,
+            .device = null,
+        },
+        .bar_params = null,
+    };
+    const brightness_info = try p.cmd_params.getBrightnessInfo(allocator);
+    defer {
+        brightness_info.deinit();
+        allocator.destroy(brightness_info);
+    }
+
+    try expectEqualStrings(brightness_info.device, "intel_backlight");
+    try expectEqualStrings(brightness_info.class, "backlight");
+
 }

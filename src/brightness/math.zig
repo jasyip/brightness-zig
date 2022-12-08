@@ -16,9 +16,11 @@ pub fn mpdAssert(status: *u32) !void {
 
 
 
+const Allocator = std.mem.Allocator;
 
 
 pub const BrightnessInfo = struct {
+    allocator: Allocator,
     class: []const u8,
     device: []const u8,
     cur_val: u16,
@@ -58,5 +60,12 @@ pub const BrightnessInfo = struct {
 
         return output;
     }
+
+    pub fn deinit(self: *const @This()) void {
+        self.allocator.free(self.class);
+        self.allocator.free(self.device);
+    }
+
+
 };
 
