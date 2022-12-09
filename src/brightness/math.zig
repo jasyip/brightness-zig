@@ -101,30 +101,23 @@ pub fn brightnessctlInfo(allocator: Allocator, device: ?[]const u8, class: ?[]co
         allocator.free(cmd_result.stderr);
     }
 
-    var output: BrightnessInfo = undefined;
-    output.allocator = allocator;
-
+    var tokens: [5][]const u8 = undefined;
+    if (std.mem.count(u8, cmd_result.stdout, ",") != tokens.len - 1) return error.TokenError;
     var iter = std.mem.tokenize(u8, cmd_result.stdout, ",");
+    for (tokens) |*token| {
+        token.* = iter.next().?;
+    }
 
-    if (iter.next()) |token| {
-        output.device = try allocator.dupe(u8, token);
-    } else return error.TokenError;
-    errdefer allocator.free(output.device);
+    const device_val = try allocator.dupe(u8, tokens[0]);
+    errdefer allocator.free(device_val);
+    const class_val = try allocator.dupe(u8, tokens[1]);
+    errdefer allocator.free(class_val);
 
-    if (iter.next()) |token| {
-        output.class = try allocator.dupe(u8, token);
-    } else return error.TokenError;
-    errdefer allocator.free(output.class);
-
-    if (iter.next()) |token| {
-        output.cur_val = try parseU16(token);
-    } else return error.TokenError;
-
-    if (iter.next() == null) return error.TokenError;
-
-    if (iter.next()) |token| {
-        output.max_val = try parseU16(std.mem.trimRight(u8, token, "\n"));
-    } else return error.TokenError;
-
-    return output;
+    return BrightnessInfo {
+        .allocator = allocator,
+        .device = device_val,
+        .class = class_val,
+        .cur_val = try parseU16(tokens[2]),
+        .max_val = try parseU16(std.mem.trimRight(u8, tokens[4], "\n")),
+    };
 }
