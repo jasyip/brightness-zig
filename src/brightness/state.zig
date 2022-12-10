@@ -1,4 +1,5 @@
 const std = @import("std");
+const c = @import("c.zig");
 
 const Allocator = std.mem.Allocator;
 
@@ -36,3 +37,7 @@ pub fn ensureDeviceDir(allocator: Allocator, device: []const u8, class: []const 
         ind = upper_ind + std.fs.path.sep_str.len;
     }
 }
+
+// pub fn percentState(device_dir: []const u8, : BrightnessInfo, change: *const c.mpd_t) !?*c.mpd_t {
+// 
+// }

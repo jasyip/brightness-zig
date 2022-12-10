@@ -15,27 +15,59 @@ const Allocator = std.mem.Allocator;
 
 
 
+fn parseU16(buf: []const u8) !u16 {
+    return try std.fmt.parseUnsigned(u16, buf, 10);
+}
 
+const app_name = "brightnessctl";
 
-const Bar = struct {
-    name: []const u8,
-    signal_num: u8,
-};
+fn brightnessctlInfo(allocator: Allocator, device: ?[]const u8, class: ?[]const u8) !b.BrightnessInfo {
 
-const Params = struct {
-    change: *c.mpd_t,
-    exponent: *c.mpd_t,
-    min_value: u16,
-    device: ?[]const u8,
-    class: ?[]const u8,
-    bar_params: ?Bar,
-
-    fn newPercent(self: *const @This(), allocator: Allocator, brightness_info: *const b.BrightnessInfo) !*c.mpd_t {
-        _ = self;
-        const cur_percent = brightness_info.getPercent(allocator);
-        defer allocator.destroy(cur_percent);
+    var cmd_line = std.ArrayList([]const u8).init(allocator);
+    defer cmd_line.deinit();
+    try cmd_line.appendSlice(&[_][]const u8{
+        app_name,
+        "--machine-readable",
+        "info",
+    });
+    if (device) |device_str| {
+        try cmd_line.appendSlice(&[_][]const u8{ " --device ", device_str });
     }
-};
+    if (class) |class_str| {
+        try cmd_line.appendSlice(&[_][]const u8{ " --class ", class_str });
+    }
+    const cmd_result = try std.ChildProcess.exec(.{
+        .allocator = allocator,
+        .argv = cmd_line.items,
+    });
+    if (cmd_result.term.Exited != 0) return error.SubcommandError;
+    defer {
+        allocator.free(cmd_result.stdout);
+        allocator.free(cmd_result.stderr);
+    }
+
+    var tokens: [5][]const u8 = undefined;
+    if (std.mem.count(u8, cmd_result.stdout, ",") != tokens.len - 1) return error.TokenError;
+    var iter = std.mem.tokenize(u8, cmd_result.stdout, ",");
+    for (tokens) |*token| {
+        token.* = iter.next().?;
+    }
+
+    const device_val = try allocator.dupe(u8, tokens[0]);
+    errdefer allocator.free(device_val);
+    const class_val = try allocator.dupe(u8, tokens[1]);
+    errdefer allocator.free(class_val);
+
+    return b.BrightnessInfo {
+        .allocator = allocator,
+        .device = device_val,
+        .class = class_val,
+        .cur_val = try parseU16(tokens[2]),
+        .max_val = try parseU16(std.mem.trimRight(u8, tokens[4], "\n")),
+    };
+}
+
+
 
 fn parserError(comptime msg: []const u8) error{InvalidParameter}!void {
     debug.print("Error while parsing arguments: " ++ msg ++ "\n", .{});
@@ -44,8 +76,9 @@ fn parserError(comptime msg: []const u8) error{InvalidParameter}!void {
 
 pub fn main() !void {
 
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    const allocator = gpa.allocator();
+    // var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    // const allocator = gpa.allocator();
+    const allocator = std.heap.c_allocator;
 
     const params = comptime clap.parseParamsComptime(
         \\-h, --help                    Display this help and exit.
@@ -126,7 +159,7 @@ pub fn main() !void {
                 "`--bar-process-name` and `--signal-num` must be" ++ "both present or absent"
         );
     }
-    const p = Params{
+    const p = b.Params{
         .change = change,
         .exponent = exponent,
         .min_value = res.args.@"min-value" orelse 1,
@@ -138,9 +171,9 @@ pub fn main() !void {
         },
     };
 
-    const brightness_info = try b.brightnessctlInfo(allocator, p.device, p.class);
+    const brightness_info = try brightnessctlInfo(allocator, p.device, p.class);
     defer brightness_info.deinit();
-    try b.ensureDeviceDir(allocator, brightness_info.device, brightness_info.class);
+    // try b.ensureDeviceDir(allocator, brightness_info.device, brightness_info.class);
 
 }
 
@@ -173,7 +206,7 @@ test "simple test" {
     //     &status,
     // );
 
-    const brightness_info = try b.brightnessctlInfo(allocator, null, null);
+    const brightness_info = try brightnessctlInfo(allocator, null, null);
     defer brightness_info.deinit();
 
     try expectEqualStrings(brightness_info.device, "intel_backlight");
