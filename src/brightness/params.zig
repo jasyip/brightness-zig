@@ -18,7 +18,7 @@ pub const Params = struct {
     class: ?[]const u8,
     bar_params: ?Bar,
 
-    fn newPercent(self: *const @This(), allocator: Allocator, brightness_info: *const info.BrightnessInfo) !*c.mpd_t {
+    fn newPercent(self: *const @This(), allocator: Allocator, brightness_info: *const info.RawBrightnessInfo) !*c.mpd_t {
         _ = self;
         const cur_percent = brightness_info.getPercent(allocator);
         defer allocator.destroy(cur_percent);

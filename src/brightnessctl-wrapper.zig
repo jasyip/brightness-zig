@@ -21,7 +21,7 @@ fn parseU16(buf: []const u8) !u16 {
 
 const app_name = "brightnessctl";
 
-fn brightnessctlInfo(allocator: Allocator, device: ?[]const u8, class: ?[]const u8) !b.BrightnessInfo {
+fn brightnessctlInfo(allocator: Allocator, device: ?[]const u8, class: ?[]const u8) !b.RawBrightnessInfo {
 
     var cmd_line = std.ArrayList([]const u8).init(allocator);
     defer cmd_line.deinit();
@@ -58,13 +58,13 @@ fn brightnessctlInfo(allocator: Allocator, device: ?[]const u8, class: ?[]const 
     const class_val = try allocator.dupe(u8, tokens[1]);
     errdefer allocator.free(class_val);
 
-    return b.BrightnessInfo {
-        .allocator = allocator,
-        .device = device_val,
-        .class = class_val,
-        .cur_val = try parseU16(tokens[2]),
-        .max_val = try parseU16(std.mem.trimRight(u8, tokens[4], "\n")),
-    };
+    return try b.newBrightessInfo(
+        allocator,
+        class_val,
+        device_val,
+        try parseU16(tokens[2]),
+        try parseU16(std.mem.trimRight(u8, tokens[4], "\n")),
+    );
 }
 
 
@@ -181,30 +181,30 @@ test "simple test" {
     const allocator = std.testing.allocator;
     const expectEqualStrings = std.testing.expectEqualStrings;
 
-    // var context: c.mpd_context_t = undefined;
-    // c.mpd_defaultcontext(&context);
+    var context: c.mpd_context_t = undefined;
+    c.mpd_defaultcontext(&context);
 
-    // const change = c.mpd_new(&context);
-    // const exponent = c.mpd_new(&context);
-    // defer {
-    //     c.mpd_del(change);
-    //     c.mpd_del(exponent);
-    // }
-    // var status: u32 = 0;
+    const change = c.mpd_new(&context);
+    const exponent = c.mpd_new(&context);
+    defer {
+        c.mpd_del(change);
+        c.mpd_del(exponent);
+    }
+    var status: u32 = 0;
 
-    // c.mpd_qset_string(
-    //     exponent,
-    //     "3",
-    //     &context,
-    //     &status,
-    // );
+    c.mpd_qset_string(
+        exponent,
+        "3",
+        &context,
+        &status,
+    );
 
-    // c.mpd_qset_string(
-    //     change,
-    //     "12",
-    //     &context,
-    //     &status,
-    // );
+    c.mpd_qset_string(
+        change,
+        "12",
+        &context,
+        &status,
+    );
 
     const brightness_info = try brightnessctlInfo(allocator, null, null);
     defer brightness_info.deinit();
