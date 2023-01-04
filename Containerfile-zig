@@ -1,19 +1,25 @@
-# Dockerfile to test brightness-zig in the context of writing to /var folder
+# Containerfile to set up an image with Zig installed
 
-FROM alpine
-ARG PLATFORM=linux
-ARG ARCHITECTURE=x86_64
-ENV ZIG_VERSION=0.10.0
-ARG ZIG_DOWNLOAD_NAME=zig-${PLATFORM}-${ARCHITECTURE}-${ZIG_VERSION}
+ARG ZIG_BASE_IMAGE=alpine
+FROM ${ZIG_BASE_IMAGE}
+ARG BUILDOS
+ARG BUILDARCH
+ARG ZIG_VERSION=0.10.0
 
-WORKDIR /tmp
-RUN wget -c "https://ziglang.org/download/${ZIG_VERSION}/${ZIG_DOWNLOAD_NAME}.tar.xz"
-RUN tar -xf ${ZIG_DOWNLOAD_NAME}.tar.xz
-RUN rm ${ZIG_DOWNLOAD_NAME}.tar.xz
-
-WORKDIR ${ZIG_DOWNLOAD_NAME}
-RUN mv zig /usr/local/bin/
-RUN cp -r lib /usr/local/
 
 WORKDIR /tmp
-RUN rm -r ${ZIG_DOWNLOAD_NAME}
+RUN ZIG_DOWNLOAD_NAME="zig-${BUILDOS}-$(case "${BUILDARCH}" in \
+        amd64) echo x86_64 ;; \
+        *) echo ${BUILDARCH} ;; \
+      esac \
+      )-${ZIG_VERSION}"; \
+    wget "https://ziglang.org/download/${ZIG_VERSION}/${ZIG_DOWNLOAD_NAME}.tar.xz"; \
+    tar -xf "${ZIG_DOWNLOAD_NAME}.tar.xz"; \
+    rm "${ZIG_DOWNLOAD_NAME}.tar.xz"; \
+    cd "${ZIG_DOWNLOAD_NAME}"; \
+    mv zig /usr/local/bin/; \
+    cp -r lib /usr/local/; \
+    cd ..; \
+    rm -r "${ZIG_DOWNLOAD_NAME}"
+
+WORKDIR /opt
