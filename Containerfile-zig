@@ -1,0 +1,19 @@
+# Dockerfile to test brightness-zig in the context of writing to /var folder
+
+FROM alpine
+ARG PLATFORM=linux
+ARG ARCHITECTURE=x86_64
+ENV ZIG_VERSION=0.10.0
+ARG ZIG_DOWNLOAD_NAME=zig-${PLATFORM}-${ARCHITECTURE}-${ZIG_VERSION}
+
+WORKDIR /tmp
+RUN wget -N -c "https://ziglang.org/download/${ZIG_VERSION}/${ZIG_DOWNLOAD_NAME}.tar.xz"
+RUN tar -xf ${ZIG_DOWNLOAD_NAME}.tar.xz
+RUN rm ${ZIG_DOWNLOAD_NAME}.tar.xz
+
+WORKDIR ${ZIG_DOWNLOAD_NAME}
+RUN mv zig /usr/local/bin/
+RUN cp -r lib /usr/local/
+
+WORKDIR /tmp
+RUN rm -r ${ZIG_DOWNLOAD_NAME}

@@ -1,0 +1,12 @@
+/zig-out/
+/zig-cache/
+.git*
+Containerfile*
+.*ignore
+
+*.md
+LICENSE*
+example/
+
+zig.mod
+gyro.zzz
