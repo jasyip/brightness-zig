@@ -1,6 +1,16 @@
 const std = @import("std");
 
 
+fn setDependencies(step: *std.build.LibExeObjStep, target: std.zig.CrossTarget, mode: std.builtin.Mode) void {
+    step.addPackagePath("clap", "lib/zig-clap/clap.zig");
+    step.linkLibC();
+    step.linkSystemLibrary("mpdec");
+
+    step.setTarget(target);
+    step.setBuildMode(mode);
+}
+
+
 pub fn build(b: *std.build.Builder) void {
     // Standard target options allows the person running `zig build` to choose
     // what target to build for. Here we do not override the defaults, which
@@ -13,14 +23,7 @@ pub fn build(b: *std.build.Builder) void {
     const mode = b.standardReleaseOptions();
 
     const exe = b.addExecutable("brightnessctl-wrap", "src/brightnessctl-wrapper.zig");
-    exe.addPackagePath("clap", "lib/zig-clap/clap.zig");
-
-    exe.linkLibC();
-    exe.linkSystemLibrary("mpdec");
-
-
-    exe.setTarget(target);
-    exe.setBuildMode(mode);
+    setDependencies(exe, target, mode);
     exe.install();
 
     const run_cmd = exe.run();
@@ -32,9 +35,8 @@ pub fn build(b: *std.build.Builder) void {
     const run_step = b.step("run", "Run the app");
     run_step.dependOn(&run_cmd.step);
 
-    const exe_tests = b.addTest("src/main.zig");
-    exe_tests.setTarget(target);
-    exe_tests.setBuildMode(mode);
+    const exe_tests = b.addTest("src/brightnessctl-wrapper.zig");
+    setDependencies(exe_tests, target, mode);
 
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&exe_tests.step);

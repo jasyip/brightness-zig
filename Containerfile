@@ -8,7 +8,4 @@ RUN mkdir /opt/brightness-zig
 WORKDIR /opt/brightness-zig
 COPY ./ ./
 
-RUN ls -l --color
-
-# ENTRYPOINT zig test src/brightnessctl-wrapper.zig
-
+ENTRYPOINT zig build test -Drelease-small=true

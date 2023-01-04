@@ -7,7 +7,7 @@ ENV ZIG_VERSION=0.10.0
 ARG ZIG_DOWNLOAD_NAME=zig-${PLATFORM}-${ARCHITECTURE}-${ZIG_VERSION}
 
 WORKDIR /tmp
-RUN wget -N -c "https://ziglang.org/download/${ZIG_VERSION}/${ZIG_DOWNLOAD_NAME}.tar.xz"
+RUN wget -c "https://ziglang.org/download/${ZIG_VERSION}/${ZIG_DOWNLOAD_NAME}.tar.xz"
 RUN tar -xf ${ZIG_DOWNLOAD_NAME}.tar.xz
 RUN rm ${ZIG_DOWNLOAD_NAME}.tar.xz
 
